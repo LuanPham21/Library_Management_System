@@ -1,0 +1,77 @@
+model User {
+    id       String @id @default(cuid())
+    name     String
+    email    String @unique
+    password String
+
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
+
+    roleId        String?
+    role          Role?          @relation(fields: [roleId], references: [id], onDelete: Cascade)
+    borrowRecords BorrowRecord[]
+}
+
+model Role {
+    id   String @id @default(cuid())
+    name String
+
+    user User[]
+}
+
+model Book {
+    id          String  @id @default(cuid())
+    title       String
+    description String?
+    quantity    Int     @default(0)
+
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    deletedAt DateTime?
+
+    categoryId String?
+    category   Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+    authorId   String?
+    author     Author?   @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+    borrowRecords BorrowRecord[]
+}
+
+model Author {
+    id   String @id @default(cuid())
+    name String
+
+    deletedAt DateTime?
+
+    book Book[]
+}
+
+model Category {
+    id   String @id @default(cuid())
+    name String
+
+    deletedAt DateTime?
+
+    book Book[]
+}
+
+enum BorrowStatus {
+    BORROWED
+    Returned
+    Overdue
+}
+
+model BorrowRecord {
+    id         String       @id @default(cuid())
+    userId     String
+    bookId     String
+    borrowDate DateTime     @default(now())
+    dueDate    DateTime
+    updatedAt  DateTime     @updatedAt
+    returnDate DateTime?
+    status     BorrowStatus
+
+    user User @relation(fields: [userId], references: [id])
+    book Book @relation(fields: [bookId], references: [id])
+}
