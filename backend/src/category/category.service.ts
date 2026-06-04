@@ -1,12 +1,18 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
+import { GetCategoriesDto } from './dto/get-category.dto';
 
 @Injectable()
 export class CategoryService {
-  constructor(private readonly prismaService: PrismaService) { }
+  constructor(private readonly prismaService: PrismaService) {}
 
   create(createCategoryDto: CreateCategoryDto) {
     return this.prismaService.category.create({
@@ -14,45 +20,108 @@ export class CategoryService {
       select: {
         id: true,
         name: true,
-      }
+      },
     });
   }
 
-  findAll() {
-    return this.prismaService.category.findMany({
-      select: {
-        id: true,
-        name: true,
-        createdAt: true,
-        updatedAt: true,
-        deletedAt: true,
-      }
-    });
+  async findAll(query: GetCategoriesDto) {
+    const { page, pageSize, search } = query;
+
+    const skip = (page - 1) * pageSize;
+    const where: Prisma.CategoryWhereInput = {
+      deletedAt: null,
+    };
+
+    if (search) {
+      where.OR = [
+        {
+          name: {
+            contains: search,
+            mode: Prisma.QueryMode.insensitive,
+          },
+        },
+      ];
+    }
+
+    const [categories, total] = await Promise.all([
+      this.prismaService.category.findMany({
+        where,
+        skip,
+        take: pageSize,
+
+        select: {
+          id: true,
+          name: true,
+          createdAt: true,
+
+          _count: {
+            select: {
+              book: {
+                where: {
+                  deletedAt: null,
+                },
+              },
+            },
+          },
+        },
+
+        orderBy: {
+          createdAt: 'asc',
+        },
+      }),
+
+      this.prismaService.category.count({
+        where,
+      }),
+    ]);
+
+    return {
+      data: categories.map((_item) => ({
+        id: _item.id,
+        name: _item.name,
+        createdAt: _item.createdAt,
+        bookCount: _item._count.book,
+      })),
+
+      meta: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
+    };
   }
 
-  findOne(id: string) {
+  async findOne(id: string) {
     try {
-      return this.prismaService.category.findUniqueOrThrow({
-        where: { id },
+      const category = await this.prismaService.category.findUniqueOrThrow({
+        where: {
+          id,
+          deletedAt: null,
+        },
         select: {
           id: true,
           name: true,
           createdAt: true,
           updatedAt: true,
           deletedAt: true,
-          book: {
+
+          _count: {
             select: {
-              id: true,
-              title: true,
-              description: true,
-              quantity: true,
-              createdAt: true,
-              updatedAt: true,
-              deletedAt: true,
-            }
+              book: {
+                where: {
+                  deletedAt: null,
+                },
+              },
+            },
           },
-        }
+        },
       });
+
+      return {
+        ...category,
+        bookCount: category._count.book,
+      };
     } catch (error) {
       throw new NotFoundException('Author not found');
     }
@@ -60,7 +129,10 @@ export class CategoryService {
 
   async update(id: string, updateCategoryDto: UpdateCategoryDto) {
     const role = await this.prismaService.category.findUnique({
-      where: { id },
+      where: {
+        id,
+        deletedAt: null,
+      },
     });
 
     if (!role) {
@@ -89,18 +161,18 @@ export class CategoryService {
               createdAt: true,
               updatedAt: true,
               deletedAt: true,
-            }
+            },
           },
-        }
+        },
       });
     } catch (error) {
-      throw new NotFoundException("Something went wrong");
+      throw new NotFoundException('Something went wrong');
     }
   }
 
   async remove(id: string) {
     const role = await this.prismaService.category.findUnique({
-      where: { id },
+      where: { id, deletedAt: null },
     });
 
     if (!role) {
@@ -123,7 +195,7 @@ export class CategoryService {
     try {
       const dataUpdate = {
         updatedAt: new Date(),
-        deletedAt: new Date()
+        deletedAt: new Date(),
       };
 
       return this.prismaService.category.update({
@@ -144,12 +216,12 @@ export class CategoryService {
               createdAt: true,
               updatedAt: true,
               deletedAt: true,
-            }
+            },
           },
-        }
+        },
       });
     } catch (error) {
-      throw new NotFoundException("Something went wrong");
+      throw new NotFoundException('Something went wrong');
     }
   }
 }

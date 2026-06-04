@@ -1,13 +1,18 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { BorrowStatus, Prisma } from '@prisma/client';
+
+import { GetBooksDto } from './dto/get-book.dto';
 import { CreateBookDto } from './dto/create-book.dto';
 import { UpdateBookDto } from './dto/update-book.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { GetBooksDto } from './dto/get-book.dto';
-import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class BookService {
-  constructor(private readonly prismaService: PrismaService) { }
+  constructor(private readonly prismaService: PrismaService) {}
 
   create(createBookDto: CreateBookDto) {
     return this.prismaService.book.create({
@@ -20,7 +25,7 @@ export class BookService {
         createdAt: true,
         updatedAt: true,
         deletedAt: true,
-      }
+      },
     });
   }
 
@@ -61,14 +66,45 @@ export class BookService {
 
     const [books, total] = await Promise.all([
       this.prismaService.book.findMany({
-        where: where,
+        where,
         skip,
         take: pageSize,
 
-        include: {
-          author: true,
-          category: true,
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          createdAt: true,
+          quantity: true,
+          authorId: true,
+          categoryId: true,
+
+          author: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          category: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+
+          _count: {
+            select: {
+              borrowRecords: {
+                where: {
+                  status: {
+                    not: BorrowStatus.Overdue,
+                  },
+                },
+              },
+            },
+          },
         },
+
         orderBy: {
           createdAt: 'asc',
         },
@@ -80,7 +116,18 @@ export class BookService {
     ]);
 
     return {
-      data: books,
+      data: books.map((_item) => ({
+        id: _item.id,
+        title: _item.title,
+        description: _item.description,
+        createdAt: _item.createdAt,
+        quantity: _item.quantity,
+        author: _item.author,
+        authorId: _item.authorId,
+        category: _item.category,
+        categoryId: _item.categoryId,
+        borrowRecordCount: _item._count.borrowRecords,
+      })),
 
       meta: {
         page,
@@ -90,7 +137,6 @@ export class BookService {
       },
     };
   }
-
 
   findOne(id: string) {
     try {
@@ -104,11 +150,172 @@ export class BookService {
           createdAt: true,
           updatedAt: true,
           deletedAt: true,
-        }
+          authorId: true,
+          categoryId: true,
+
+          author: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          category: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
       });
     } catch (error) {
       throw new NotFoundException('Book not found');
     }
+  }
+
+  async findBookByAuthorId(id: string, query: GetBooksDto) {
+    const { page, pageSize, search } = query;
+
+    const skip = (page - 1) * pageSize;
+    const where: Prisma.BookWhereInput = {
+      deletedAt: null,
+      authorId: id,
+    };
+
+    if (search) {
+      where.OR = [
+        {
+          title: {
+            contains: search,
+            mode: Prisma.QueryMode.insensitive,
+          },
+        },
+      ];
+    }
+
+    const [books, total] = await Promise.all([
+      this.prismaService.book.findMany({
+        where,
+        skip,
+        take: pageSize,
+
+        select: {
+          id: true,
+          title: true,
+          createdAt: true,
+          quantity: true,
+
+          _count: {
+            select: {
+              borrowRecords: {
+                where: {
+                  status: {
+                    not: BorrowStatus.Overdue,
+                  },
+                },
+              },
+            },
+          },
+        },
+
+        orderBy: {
+          createdAt: 'asc',
+        },
+      }),
+
+      this.prismaService.book.count({
+        where,
+      }),
+    ]);
+
+    return {
+      data: books.map((_item) => ({
+        id: _item.id,
+        title: _item.title,
+        createdAt: _item.createdAt,
+        quantity: _item.quantity,
+        borrowRecordCount: _item._count.borrowRecords,
+      })),
+
+      meta: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
+    };
+  }
+
+  async findBookByCategoryId(id: string, query: GetBooksDto) {
+    const { page, pageSize, search } = query;
+
+    const skip = (page - 1) * pageSize;
+    const where: Prisma.BookWhereInput = {
+      deletedAt: null,
+      categoryId: id,
+    };
+
+    if (search) {
+      where.OR = [
+        {
+          title: {
+            contains: search,
+            mode: Prisma.QueryMode.insensitive,
+          },
+        },
+      ];
+    }
+
+    const [books, total] = await Promise.all([
+      this.prismaService.book.findMany({
+        where,
+        skip,
+        take: pageSize,
+
+        select: {
+          id: true,
+          title: true,
+          createdAt: true,
+          quantity: true,
+
+          _count: {
+            select: {
+              borrowRecords: {
+                where: {
+                  status: {
+                    not: BorrowStatus.Overdue,
+                  },
+                },
+              },
+            },
+          },
+        },
+
+        orderBy: {
+          createdAt: 'asc',
+        },
+      }),
+
+      this.prismaService.book.count({
+        where,
+      }),
+    ]);
+
+    return {
+      data: books.map((_item) => ({
+        id: _item.id,
+        title: _item.title,
+        createdAt: _item.createdAt,
+        quantity: _item.quantity,
+        borrowRecordCount: _item._count.borrowRecords,
+      })),
+
+      meta: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
+    };
   }
 
   async update(id: string, updateBookDto: UpdateBookDto) {
@@ -135,10 +342,10 @@ export class BookService {
           createdAt: true,
           updatedAt: true,
           deletedAt: true,
-        }
+        },
       });
     } catch (error) {
-      throw new NotFoundException("Something went wrong");
+      throw new NotFoundException('Something went wrong');
     }
   }
 
@@ -151,10 +358,21 @@ export class BookService {
       throw new NotFoundException('Book not found');
     }
 
+    const activeBorrow = await this.prismaService.borrowRecord.findFirst({
+      where: {
+        bookId: id,
+        status: BorrowStatus.BORROWED,
+      },
+    });
+
+    if (activeBorrow) {
+      throw new BadRequestException('Không thể xoá sách đang được mượn');
+    }
+
     try {
       const dataUpdate = {
         updatedAt: new Date(),
-        deletedAt: new Date()
+        deletedAt: new Date(),
       };
 
       return this.prismaService.book.update({
@@ -168,10 +386,10 @@ export class BookService {
           createdAt: true,
           updatedAt: true,
           deletedAt: true,
-        }
+        },
       });
     } catch (error) {
-      throw new NotFoundException("Something went wrong");
+      throw new NotFoundException('Something went wrong');
     }
   }
 }

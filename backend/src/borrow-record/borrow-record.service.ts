@@ -1,14 +1,19 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { BorrowStatus, Prisma } from '@prisma/client';
 
 import { PrismaService } from 'src/prisma/prisma.service';
+import { GetBorrowRecordDto } from './dto/get-borrow-record.dto';
+import { getBorrowStatus } from 'src/helper/get-borrrow-status';
 import { CreateBorrowRecordDto } from './dto/create-borrow-record.dto';
 import { UpdateBorrowRecordDto } from './dto/update-borrow-record.dto';
-import { GetBorrowRecordDto } from './dto/get-borrow-record.dto';
-import { BorrowStatus, Prisma } from '@prisma/client';
 
 @Injectable()
 export class BorrowRecordService {
-  constructor(private readonly prismaService: PrismaService) { }
+  constructor(private readonly prismaService: PrismaService) {}
 
   async create(createBorrowRecordDto: CreateBorrowRecordDto) {
     const book = await this.prismaService.book.findUnique({
@@ -23,20 +28,16 @@ export class BorrowRecordService {
     }
 
     if (book.quantity <= 0) {
-      throw new BadRequestException(
-        'Book is out of stock',
-      );
+      throw new BadRequestException('Book is out of stock');
     }
 
     return this.prismaService.$transaction(async (tx) => {
-
-      const borrowRecord =
-        await tx.borrowRecord.create({
-          data: {
-            ...createBorrowRecordDto,
-            status: BorrowStatus.BORROWED,
-          },
-        });
+      const borrowRecord = await tx.borrowRecord.create({
+        data: {
+          ...createBorrowRecordDto,
+          status: BorrowStatus.BORROWED,
+        },
+      });
 
       await tx.book.update({
         where: {
@@ -106,6 +107,29 @@ export class BorrowRecordService {
         skip,
         take: pageSize,
 
+        select: {
+          id: true,
+          borrowDate: true,
+          dueDate: true,
+          status: true,
+          bookId: true,
+          userId: true,
+          returnDate: true,
+
+          user: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          book: {
+            select: {
+              id: true,
+              title: true,
+            },
+          },
+        },
+
         orderBy: {
           borrowDate: 'asc',
         },
@@ -117,7 +141,10 @@ export class BorrowRecordService {
     ]);
 
     return {
-      data: borrowRecord,
+      data: borrowRecord.map((item) => ({
+        ...item,
+        status: getBorrowStatus(item.status, item.dueDate),
+      })),
 
       meta: {
         page,
@@ -128,32 +155,231 @@ export class BorrowRecordService {
     };
   }
 
-  findOne(id: string) {
+  async findOne(id: string) {
     try {
-      return this.prismaService.borrowRecord.findUniqueOrThrow({
+      const record = await this.prismaService.borrowRecord.findUniqueOrThrow({
         where: { id },
+        select: {
+          id: true,
+          borrowDate: true,
+          dueDate: true,
+          updatedAt: true,
+          returnDate: true,
+          status: true,
+          bookId: true,
+          userId: true,
+
+          user: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          book: {
+            select: {
+              id: true,
+              title: true,
+            },
+          },
+        },
+      });
+      return {
+        ...record,
+        status: getBorrowStatus(record.status, record.dueDate),
+      };
+    } catch (error) {
+      throw new NotFoundException('Borrow record not found');
+    }
+  }
+
+  async findBorrowRecordByBookId(id: string, query: GetBorrowRecordDto) {
+    const { page, pageSize, search } = query;
+
+    const skip = (page - 1) * pageSize;
+    const where: Prisma.BorrowRecordWhereInput = {
+      bookId: id,
+    };
+
+    if (search) {
+      where.OR = [
+        {
+          user: {
+            is: {
+              name: {
+                contains: search,
+                mode: 'insensitive',
+              },
+            },
+          },
+        },
+        {
+          user: {
+            is: {
+              email: {
+                contains: search,
+                mode: 'insensitive',
+              },
+            },
+          },
+        },
+        {
+          book: {
+            is: {
+              title: {
+                contains: search,
+                mode: 'insensitive',
+              },
+            },
+          },
+        },
+      ];
+    }
+
+    const [borrowRecord, total] = await Promise.all([
+      this.prismaService.borrowRecord.findMany({
+        where: where,
+        skip,
+        take: pageSize,
+
         select: {
           id: true,
           user: {
             select: {
-              name: true
-            }
+              id: true,
+              name: true,
+            },
           },
           book: {
             select: {
-              title: true
-            }
+              id: true,
+              title: true,
+            },
           },
           borrowDate: true,
           dueDate: true,
           updatedAt: true,
           returnDate: true,
-          status: true
-        }
-      });
-    } catch (error) {
-      throw new NotFoundException('Borrow record not found');
+          status: true,
+        },
+
+        orderBy: {
+          borrowDate: 'asc',
+        },
+      }),
+
+      this.prismaService.borrowRecord.count({
+        where,
+      }),
+    ]);
+
+    return {
+      data: borrowRecord.map((item) => ({
+        ...item,
+        status: getBorrowStatus(item.status, item.dueDate),
+      })),
+
+      meta: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
+    };
+  }
+
+  async findBorrowRecordByUserId(id: string, query: GetBorrowRecordDto) {
+    const { page, pageSize, search } = query;
+
+    const skip = (page - 1) * pageSize;
+    const where: Prisma.BorrowRecordWhereInput = {
+      userId: id,
+    };
+
+    if (search) {
+      where.OR = [
+        {
+          user: {
+            is: {
+              name: {
+                contains: search,
+                mode: 'insensitive',
+              },
+            },
+          },
+        },
+        {
+          user: {
+            is: {
+              email: {
+                contains: search,
+                mode: 'insensitive',
+              },
+            },
+          },
+        },
+        {
+          book: {
+            is: {
+              title: {
+                contains: search,
+                mode: 'insensitive',
+              },
+            },
+          },
+        },
+      ];
     }
+
+    const [borrowRecord, total] = await Promise.all([
+      this.prismaService.borrowRecord.findMany({
+        where: where,
+        skip,
+        take: pageSize,
+
+        select: {
+          id: true,
+          user: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          book: {
+            select: {
+              id: true,
+              title: true,
+            },
+          },
+          borrowDate: true,
+          dueDate: true,
+          updatedAt: true,
+          returnDate: true,
+          status: true,
+        },
+
+        orderBy: {
+          borrowDate: 'asc',
+        },
+      }),
+
+      this.prismaService.borrowRecord.count({
+        where,
+      }),
+    ]);
+
+    return {
+      data: borrowRecord.map((item) => ({
+        ...item,
+        status: getBorrowStatus(item.status, item.dueDate),
+      })),
+
+      meta: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
+    };
   }
 
   async update(id: string, updateBorrowRecordDto: UpdateBorrowRecordDto) {
@@ -166,9 +392,7 @@ export class BorrowRecordService {
     }
 
     if (item.status !== BorrowStatus.BORROWED) {
-      throw new BadRequestException(
-        'Book already returned',
-      );
+      throw new BadRequestException('Book already returned');
     }
 
     try {
@@ -196,24 +420,24 @@ export class BorrowRecordService {
             id: true,
             user: {
               select: {
-                name: true
-              }
+                name: true,
+              },
             },
             book: {
               select: {
-                title: true
-              }
+                title: true,
+              },
             },
             borrowDate: true,
             dueDate: true,
             updatedAt: true,
             returnDate: true,
-            status: true
-          }
+            status: true,
+          },
         });
-      })
+      });
     } catch (error) {
-      throw new NotFoundException("Something went wrong");
+      throw new NotFoundException('Something went wrong');
     }
   }
 
